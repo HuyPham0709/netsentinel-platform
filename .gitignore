@@ -1,0 +1,12 @@
+# Node.js / React
+node_modules/
+dist/
+.env
+
+# Golang
+agent-go/main.exe
+agent-go/main
+
+# OS generated files
+.DS_Store
+Thumbs.db

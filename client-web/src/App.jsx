@@ -1,0 +1,144 @@
+import { useEffect, useState, useRef } from 'react';
+import { io } from 'socket.io-client';
+import { Activity, ShieldAlert, MonitorCheck, Network as NetworkIcon } from 'lucide-react';
+import { Network } from 'vis-network';
+import { DataSet } from 'vis-data';
+import './App.css';
+
+// Kết nối tới Server Node.js
+const socket = io('http://localhost:3000');
+
+function App() {
+  const [latestMetric, setLatestMetric] = useState(null);
+  const [isConnected, setIsConnected] = useState(false);
+  const [deviceCount, setDeviceCount] = useState(0);
+
+  // Refs dùng để điều khiển sơ đồ Vis.js mà không làm React re-render liên tục
+  const networkContainerRef = useRef(null);
+  const networkInstanceRef = useRef(null);
+  
+  // Khởi tạo điểm trung tâm (Ví dụ: Router/Agent)
+  const nodesRef = useRef(new DataSet([
+    { 
+      id: 'agent', 
+      label: 'Tâm mạng\n(Sniffer)', 
+      shape: 'image', 
+      image: 'https://cdn-icons-png.flaticon.com/512/2885/2885412.png', // Icon máy chủ
+      size: 35,
+      font: { color: '#ffffff' }
+    }
+  ]));
+  const edgesRef = useRef(new DataSet([]));
+
+  useEffect(() => {
+    // 1. Lắng nghe trạng thái kết nối và Metrics
+    socket.on('connect', () => setIsConnected(true));
+    socket.on('disconnect', () => setIsConnected(false));
+    socket.on('new_metrics', (data) => setLatestMetric(data));
+
+    // 2. Khởi tạo Sơ đồ mạng Vis.js (Chỉ chạy 1 lần khi load trang)
+    if (networkContainerRef.current && !networkInstanceRef.current) {
+      const data = { nodes: nodesRef.current, edges: edgesRef.current };
+      const options = {
+        physics: { 
+          stabilization: false, 
+          barnesHut: { springLength: 200, centralGravity: 0.3 } 
+        },
+        interaction: { hover: true, zoomView: true },
+      };
+      // Gắn sơ đồ vào thẻ div
+      networkInstanceRef.current = new Network(networkContainerRef.current, data, options);
+    }
+
+    // 3. Lắng nghe sự kiện phát hiện thiết bị mới (ARP L2-Discovery)
+    socket.on('new_device', (device) => {
+      const nodeId = device.ip;
+      
+      // Nếu thiết bị chưa tồn tại trên bản đồ thì mới thêm vào
+      if (!nodesRef.current.get(nodeId)) {
+        nodesRef.current.add({
+          id: nodeId,
+          label: `IP: ${device.ip}\nMAC: ${device.mac}`,
+          shape: 'image',
+          image: 'https://cdn-icons-png.flaticon.com/512/1055/1055685.png', // Icon máy tính/điện thoại
+          size: 20,
+          font: { color: '#a0aec0' } // Màu chữ xám nhạt cho hợp Dark Mode
+        });
+        
+        // Vẽ dây nối từ Tâm mạng tới thiết bị mới
+        edgesRef.current.add({
+          id: `edge-${nodeId}`,
+          from: 'agent',
+          to: nodeId,
+          color: { color: '#4299e1', highlight: '#63b3ed' },
+          width: 2
+        });
+
+        // Cập nhật biến đếm số thiết bị
+        setDeviceCount(nodesRef.current.length - 1);
+      }
+    });
+
+    return () => {
+      socket.off('connect');
+      socket.off('disconnect');
+      socket.off('new_metrics');
+      socket.off('new_device');
+    };
+  }, []);
+
+  return (
+    <div style={{ padding: '2rem', fontFamily: 'sans-serif', maxWidth: '1200px', margin: '0 auto' }}>
+      <h1>🛡️ NetSentinel Dashboard</h1>
+      <p style={{ color: isConnected ? '#48bb78' : '#f56565', fontWeight: 'bold' }}>
+        Trạng thái kết nối Server: {isConnected ? 'Đã kết nối (Live)' : 'Mất kết nối'}
+      </p>
+
+      {/* Row 1: Box hiển thị Metrics TCP */}
+      <div style={{ display: 'flex', gap: '20px', marginTop: '20px', flexWrap: 'wrap' }}>
+        <div style={{ flex: 1, padding: '20px', backgroundColor: '#1a202c', border: '1px solid #2d3748', borderRadius: '12px' }}>
+          <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '10px', color: '#cbd5e0' }}><Activity size={20}/> TCP SYN</h3>
+          <h2 style={{ color: '#63b3ed', fontSize: '2.5rem', margin: '10px 0' }}>
+            {latestMetric ? latestMetric.metrics.synCount : '--'} <span style={{fontSize: '1rem', color:'#718096'}}>gói/5s</span>
+          </h2>
+        </div>
+
+        <div style={{ flex: 1, padding: '20px', backgroundColor: '#1a202c', border: '1px solid #2d3748', borderRadius: '12px' }}>
+          <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '10px', color: '#cbd5e0' }}><MonitorCheck size={20}/> TCP ACK</h3>
+          <h2 style={{ color: '#48bb78', fontSize: '2.5rem', margin: '10px 0' }}>
+            {latestMetric ? latestMetric.metrics.ackCount : '--'} <span style={{fontSize: '1rem', color:'#718096'}}>gói/5s</span>
+          </h2>
+        </div>
+
+        <div style={{ flex: 1, padding: '20px', backgroundColor: '#1a202c', border: '1px solid #2d3748', borderRadius: '12px' }}>
+          <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '10px', color: '#cbd5e0' }}><ShieldAlert size={20}/> Cảnh báo</h3>
+          <h2 style={{ color: '#fc8181', fontSize: '2.5rem', margin: '10px 0' }}>
+            Bình thường
+          </h2>
+        </div>
+      </div>
+
+      {/* Row 2: Sơ đồ mạng L2 Discovery */}
+      <div style={{ marginTop: '30px', backgroundColor: '#1a202c', border: '1px solid #2d3748', borderRadius: '12px', padding: '20px' }}>
+        <h3 style={{ margin: '0 0 15px 0', display: 'flex', alignItems: 'center', gap: '10px', color: '#cbd5e0' }}>
+          <NetworkIcon size={20}/> Sơ đồ mạng nội bộ (Layer 2)
+          <span style={{ fontSize: '0.9rem', backgroundColor: '#2d3748', padding: '4px 10px', borderRadius: '20px' }}>
+            Phát hiện: {deviceCount} thiết bị
+          </span>
+        </h3>
+        
+        {/* Khung chứa bản đồ mạng */}
+        <div 
+          ref={networkContainerRef} 
+          style={{ height: '450px', backgroundColor: '#0d1117', borderRadius: '8px', border: '1px dashed #4a5568' }}
+        />
+      </div>
+
+      <p style={{ marginTop: '20px', color: '#718096', textAlign: 'center' }}>
+        <em>*Dữ liệu đang được đồng bộ thời gian thực từ NetSentinel Agent...</em>
+      </p>
+    </div>
+  );
+}
+
+export default App;
