@@ -8,22 +8,30 @@ import './App.css';
 // Kết nối tới Server Node.js
 const socket = io('http://localhost:3000');
 
+// Hàm formatBytes đặt ở ngoài component để tính toán băng thông
+const formatBytes = (bytes) => {
+  if (!bytes || bytes === 0) return '0 B/s';
+  const k = 1024;
+  const sizes = ['B/s', 'KB/s', 'MB/s', 'GB/s'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+};
+
 function App() {
   const [latestMetric, setLatestMetric] = useState(null);
   const [isConnected, setIsConnected] = useState(false);
   const [deviceCount, setDeviceCount] = useState(0);
 
-  // Refs dùng để điều khiển sơ đồ Vis.js mà không làm React re-render liên tục
+  // Refs dùng để điều khiển sơ đồ Vis.js
   const networkContainerRef = useRef(null);
   const networkInstanceRef = useRef(null);
   
-  // Khởi tạo điểm trung tâm (Ví dụ: Router/Agent)
   const nodesRef = useRef(new DataSet([
     { 
       id: 'agent', 
       label: 'Tâm mạng\n(Sniffer)', 
       shape: 'image', 
-      image: 'https://cdn-icons-png.flaticon.com/512/2885/2885412.png', // Icon máy chủ
+      image: 'https://cdn-icons-png.flaticon.com/512/2885/2885412.png',
       size: 35,
       font: { color: '#ffffff' }
     }
@@ -31,41 +39,31 @@ function App() {
   const edgesRef = useRef(new DataSet([]));
 
   useEffect(() => {
-    // 1. Lắng nghe trạng thái kết nối và Metrics
     socket.on('connect', () => setIsConnected(true));
     socket.on('disconnect', () => setIsConnected(false));
     socket.on('new_metrics', (data) => setLatestMetric(data));
 
-    // 2. Khởi tạo Sơ đồ mạng Vis.js (Chỉ chạy 1 lần khi load trang)
     if (networkContainerRef.current && !networkInstanceRef.current) {
       const data = { nodes: nodesRef.current, edges: edgesRef.current };
       const options = {
-        physics: { 
-          stabilization: false, 
-          barnesHut: { springLength: 200, centralGravity: 0.3 } 
-        },
+        physics: { stabilization: false, barnesHut: { springLength: 200, centralGravity: 0.3 } },
         interaction: { hover: true, zoomView: true },
       };
-      // Gắn sơ đồ vào thẻ div
       networkInstanceRef.current = new Network(networkContainerRef.current, data, options);
     }
 
-    // 3. Lắng nghe sự kiện phát hiện thiết bị mới (ARP L2-Discovery)
     socket.on('new_device', (device) => {
       const nodeId = device.ip;
-      
-      // Nếu thiết bị chưa tồn tại trên bản đồ thì mới thêm vào
       if (!nodesRef.current.get(nodeId)) {
         nodesRef.current.add({
           id: nodeId,
           label: `IP: ${device.ip}\nMAC: ${device.mac}`,
           shape: 'image',
-          image: 'https://cdn-icons-png.flaticon.com/512/1055/1055685.png', // Icon máy tính/điện thoại
+          image: 'https://cdn-icons-png.flaticon.com/512/1055/1055685.png',
           size: 20,
-          font: { color: '#a0aec0' } // Màu chữ xám nhạt cho hợp Dark Mode
+          font: { color: '#a0aec0' }
         });
         
-        // Vẽ dây nối từ Tâm mạng tới thiết bị mới
         edgesRef.current.add({
           id: `edge-${nodeId}`,
           from: 'agent',
@@ -73,8 +71,6 @@ function App() {
           color: { color: '#4299e1', highlight: '#63b3ed' },
           width: 2
         });
-
-        // Cập nhật biến đếm số thiết bị
         setDeviceCount(nodesRef.current.length - 1);
       }
     });
@@ -94,27 +90,41 @@ function App() {
         Trạng thái kết nối Server: {isConnected ? 'Đã kết nối (Live)' : 'Mất kết nối'}
       </p>
 
-      {/* Row 1: Box hiển thị Metrics TCP */}
+      {/* Row 1: Box hiển thị Metrics TCP & Bandwidth */}
       <div style={{ display: 'flex', gap: '20px', marginTop: '20px', flexWrap: 'wrap' }}>
+        
         <div style={{ flex: 1, padding: '20px', backgroundColor: '#1a202c', border: '1px solid #2d3748', borderRadius: '12px' }}>
-          <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '10px', color: '#cbd5e0' }}><Activity size={20}/> TCP SYN</h3>
-          <h2 style={{ color: '#63b3ed', fontSize: '2.5rem', margin: '10px 0' }}>
-            {latestMetric ? latestMetric.metrics.synCount : '--'} <span style={{fontSize: '1rem', color:'#718096'}}>gói/5s</span>
+          <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '10px', color: '#cbd5e0' }}><Activity size={20}/> Traffic</h3>
+          <h2 style={{ color: '#0bc5ea', fontSize: '2.5rem', margin: '10px 0' }}>
+            {latestMetric ? formatBytes(latestMetric.metrics.bytesPerSec) : '--'}
           </h2>
         </div>
 
         <div style={{ flex: 1, padding: '20px', backgroundColor: '#1a202c', border: '1px solid #2d3748', borderRadius: '12px' }}>
-          <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '10px', color: '#cbd5e0' }}><MonitorCheck size={20}/> TCP ACK</h3>
-          <h2 style={{ color: '#48bb78', fontSize: '2.5rem', margin: '10px 0' }}>
-            {latestMetric ? latestMetric.metrics.ackCount : '--'} <span style={{fontSize: '1rem', color:'#718096'}}>gói/5s</span>
+          <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '10px', color: '#cbd5e0' }}><MonitorCheck size={20}/> TCP SYN / ACK</h3>
+          <h2 style={{ color: '#cbd5e0', fontSize: '2.5rem', margin: '10px 0' }}>
+            <span style={{ color: '#63b3ed'}}>{latestMetric ? latestMetric.metrics.synCount : '-'}</span> 
+            <span style={{ fontSize: '1.5rem'}}> / </span> 
+            <span style={{ color: '#48bb78'}}>{latestMetric ? latestMetric.metrics.ackCount : '-'}</span>
           </h2>
         </div>
 
-        <div style={{ flex: 1, padding: '20px', backgroundColor: '#1a202c', border: '1px solid #2d3748', borderRadius: '12px' }}>
-          <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '10px', color: '#cbd5e0' }}><ShieldAlert size={20}/> Cảnh báo</h3>
-          <h2 style={{ color: '#fc8181', fontSize: '2.5rem', margin: '10px 0' }}>
-            Bình thường
-          </h2>
+        <div style={{ flex: 2, padding: '20px', backgroundColor: (latestMetric && latestMetric.alerts && latestMetric.alerts.length > 0) ? '#5c1a1a' : '#1a202c', border: '1px solid #2d3748', borderRadius: '12px', transition: 'background-color 0.5s' }}>
+          <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '10px', color: '#cbd5e0' }}>
+            <ShieldAlert size={20} color={(latestMetric && latestMetric.alerts && latestMetric.alerts.length > 0) ? '#fc8181' : '#cbd5e0'}/> 
+            Trạng thái Anomaly
+          </h3>
+          <div style={{ margin: '10px 0', minHeight: '40px' }}>
+            {(!latestMetric || !latestMetric.alerts || latestMetric.alerts.length === 0) ? (
+              <h2 style={{ color: '#48bb78', margin: 0 }}>Hệ thống bình thường</h2>
+            ) : (
+              latestMetric.alerts.map((alert, index) => (
+                <div key={index} style={{ color: '#fc8181', padding: '5px 0', fontWeight: 'bold', borderBottom: '1px solid #742a2a' }}>
+                  🚨 [{alert.type}]: {alert.message}
+                </div>
+              ))
+            )}
+          </div>
         </div>
       </div>
 
@@ -126,8 +136,6 @@ function App() {
             Phát hiện: {deviceCount} thiết bị
           </span>
         </h3>
-        
-        {/* Khung chứa bản đồ mạng */}
         <div 
           ref={networkContainerRef} 
           style={{ height: '450px', backgroundColor: '#0d1117', borderRadius: '8px', border: '1px dashed #4a5568' }}
