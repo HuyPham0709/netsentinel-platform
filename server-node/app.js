@@ -75,34 +75,46 @@ app.post('/api/discovery', async (req, res) => {
     }
 });
 
-// --- API NHẬN DỮ LIỆU METRICS & CẢNH BÁO (HỢP NHẤT) ---
-app.post('/api/metrics', async (req, res) => {
+app.get('/api/metrics/history', async (req, res) => {
     try {
-        // 1. Lưu dữ liệu vào MongoDB
-        const newMetric = new Metric(req.body);
-        await newMetric.save();
-        
-        // 2. Bắn dữ liệu Realtime ra Frontend
-        io.emit('new_metrics', req.body); 
-
-        // 3. KIỂM TRA VÀ GỬI CẢNH BÁO TELEGRAM
-        // req.body.alerts được gửi từ Agent Go
-        if (req.body.alerts && req.body.alerts.length > 0) {
-            console.log(`[Alert] Phát hiện ${req.body.alerts.length} sự cố từ Agent. Bắt đầu gửi tin nhắn...`);
-            
-            // Dùng vòng lặp for...of để đảm bảo thứ tự gửi tin
-            for (const alert of req.body.alerts) {
-                await sendTelegramAlert(`*[${alert.type}]*\n${alert.message}`);
-            }
-        }
-        
-        res.status(200).send("Metrics and Alerts processed");
+        const history = await Metric.find()
+            .sort({ timestamp: -1 })
+            .limit(20); // Lấy 20 điểm dữ liệu gần nhất cho Sparkline
+        res.json(history.reverse()); // Đảo ngược lại để vẽ từ trái sang phải
     } catch (err) {
-        console.error("[Server Error] Lỗi xử lý Metrics:", err.message);
         res.status(500).send(err.message);
     }
 });
 
+// --- CẬP NHẬT API NHẬN METRICS ---
+app.post('/api/metrics', async (req, res) => {
+    try {
+        const newMetric = new Metric(req.body);
+        await newMetric.save();
+        
+        // Bắn socket cho Frontend với data chuẩn Figma
+        io.emit('new_metrics', req.body); 
+
+        if (req.body.alerts && req.body.alerts.length > 0) {
+            for (const alert of req.body.alerts) {
+                // Gửi Telegram với format chi tiết hơn
+                const teleMsg = `*${alert.title}*\nSource: ${alert.sourceIp}\nTarget: ${alert.targetIp}\nHD: ${alert.description}`;
+                await sendTelegramAlert(teleMsg);
+            }
+        }
+        res.status(200).send("Processed");
+    } catch (err) {
+        res.status(500).send(err.message);
+    }
+});
+app.get('/api/devices', async (req, res) => {
+    try {
+        const devices = await Device.find();
+        res.json(devices);
+    } catch (err) {
+        res.status(500).send(err.message);
+    }
+});
 // --- KHỞI CHẠY SERVER ---
 const PORT = 3000;
 server.listen(PORT, () => {

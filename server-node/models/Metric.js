@@ -6,12 +6,14 @@ const MetricSchema = new mongoose.Schema({
     metrics: {
         synCount: Number,
         ackCount: Number,
-        bytesPerSec: Number, // Lưu thêm Băng thông
-        dnsQueries: [String]
+        bytesPerSec: Number,
     },
-    alerts: [{ // Lưu trữ các cảnh báo
-        type: { type: String },
-        message: String
+    alerts: [{ 
+        title: String,       // Khớp Figma
+        sourceIp: String,    // Khớp Figma
+        targetIp: String,    // Khớp Figma
+        description: String, // Khớp Figma (thay cho message cũ)
+        type: String         // Để phân loại màu sắc (ví dụ: 'critical', 'warning')
     }]
 }, { 
     timeseries: {
