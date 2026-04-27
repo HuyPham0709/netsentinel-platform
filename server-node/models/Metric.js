@@ -6,10 +6,16 @@ const MetricSchema = new mongoose.Schema({
     metrics: {
         synCount: Number,
         ackCount: Number,
-        dnsQueries: [String] // Danh sách các domain vừa truy cập
-    }
+        bytesPerSec: Number,
+    },
+    alerts: [{ 
+        title: String,       // Khớp Figma
+        sourceIp: String,    // Khớp Figma
+        targetIp: String,    // Khớp Figma
+        description: String, // Khớp Figma (thay cho message cũ)
+        type: String         // Để phân loại màu sắc (ví dụ: 'critical', 'warning')
+    }]
 }, { 
-    // Tối ưu cho MongoDB 5.0+ (Time Series Collection)
     timeseries: {
         timeField: 'timestamp',
         metaField: 'agentId',
