@@ -15,9 +15,16 @@ import (
 	"github.com/google/gopacket/pcap"
 )
 
+// --- Cấu hình hệ thống ---
 const (
 	AgentID   = "win-agent-01"
 	ServerURL = "http://localhost:3000"
+
+	// Ngưỡng lọc nhiễu (Noise Filtering)
+	MinTrafficThreshold   = 512 * 1024 // 500 KB/s - Dưới mức này sẽ không xét vọt băng thông
+	SensitivityMultiplier = 5          // Gấp 5 lần trung bình mới báo động
+	MinSynFloodThreshold  = 150        // Ít nhất 150 gói SYN/5s từ 1 IP mới nghi ngờ tấn công
+	SynAckRatioThreshold  = 5          // Lượng SYN phải gấp 5 lần ACK
 )
 
 var (
@@ -25,21 +32,21 @@ var (
 	totalAckCount int
 	totalBytes    int
 
-	// Đếm SYN/ACK phân loại theo từng IP cụ thể
+	// Theo dõi IP để phát hiện tấn công có mục tiêu
 	synPerIP = make(map[string]int)
 	ackPerIP = make(map[string]int)
 
-	// Mảng lưu lịch sử băng thông 10 phút (120 phần tử x 5s)
+	// Lịch sử băng thông để tính ngưỡng động
 	historyBps []int
 
 	dataMutex sync.Mutex
 )
 
 func main() {
-	// THAY BẰNG TÊN CARD MẠNG CỦA BẠN
+	// Card mạng của bạn
 	deviceName := "\\Device\\NPF_{C4A4D568-AFDD-490D-AA01-782922AFFCCB}"
 
-	fmt.Printf("[*] Đang khởi động NetSentinel Agent (%s)...\n", AgentID)
+	fmt.Printf("[*] Khởi động NetSentinel Agent (%s)...\n", AgentID)
 
 	handle, err := pcap.OpenLive(deviceName, 1600, true, pcap.BlockForever)
 	if err != nil {
@@ -47,65 +54,110 @@ func main() {
 	}
 	defer handle.Close()
 
-	// Bộ lọc BPF tối ưu hiệu năng
-	bpfFilter := "arp or udp port 53 or tcp port 443"
-	err = handle.SetBPFFilter(bpfFilter)
-	if err != nil {
+	// Bộ lọc BPF: Chỉ bắt các gói tin quan trọng để tối ưu CPU
+	bpfFilter := "arp or tcp"
+	if err := handle.SetBPFFilter(bpfFilter); err != nil {
 		log.Fatalf("Lỗi cài đặt BPF Filter: %v", err)
 	}
 
-	fmt.Println("[+] Sẵn sàng! Đang phân tích bất thường mạng (Traffic Monitoring & Anomaly Detection)...")
+	fmt.Println("[+] Hệ thống đang chạy ở chế độ Hardened (Chống báo giả)...")
 	fmt.Println("--------------------------------------------------")
 
+	// Chạy luồng gửi dữ liệu định kỳ
 	go startMetricsSender()
 
 	packetSource := gopacket.NewPacketSource(handle, handle.LinkType())
-
 	for packet := range packetSource.Packets() {
-		// 1. Gửi thông tin thiết bị (L2 Discovery)
-		if arpLayer := packet.Layer(layers.LayerTypeARP); arpLayer != nil {
-			arp := arpLayer.(*layers.ARP)
-			if arp.Operation == layers.ARPRequest || arp.Operation == layers.ARPReply {
-				go sendDiscoveryToServer(net.IP(arp.SourceProtAddress).String(), net.HardwareAddr(arp.SourceHwAddress).String())
-			}
-		}
-
-		dataMutex.Lock()
-
-		// 2. Tính toán lưu lượng (Bytes)
-		totalBytes += len(packet.Data())
-
-		// Bóc tách IP Nguồn
-		var srcIP string
-		if ipLayer := packet.Layer(layers.LayerTypeIPv4); ipLayer != nil {
-			ip := ipLayer.(*layers.IPv4)
-			srcIP = ip.SrcIP.String()
-		}
-
-		// 3. Phân loại TCP SYN / ACK
-		if tcpLayer := packet.Layer(layers.LayerTypeTCP); tcpLayer != nil {
-			tcp := tcpLayer.(*layers.TCP)
-			if tcp.SYN && !tcp.ACK {
-				totalSynCount++
-				if srcIP != "" {
-					synPerIP[srcIP]++
-				}
-			} else if tcp.ACK && !tcp.SYN {
-				totalAckCount++
-				if srcIP != "" {
-					ackPerIP[srcIP]++
-				}
-			}
-		}
-		dataMutex.Unlock()
+		processPacket(packet)
 	}
 }
 
-func sendDiscoveryToServer(ip string, mac string) {
-	payload := map[string]string{"ip": ip, "mac": mac, "agentId": AgentID}
-	jsonData, _ := json.Marshal(payload)
-	http.Post(ServerURL+"/api/discovery", "application/json", bytes.NewBuffer(jsonData))
+// Xử lý từng gói tin nhận được
+func processPacket(packet gopacket.Packet) {
+	// 1. Discovery (ARP)
+	if arpLayer := packet.Layer(layers.LayerTypeARP); arpLayer != nil {
+		arp := arpLayer.(*layers.ARP)
+		if arp.Operation == layers.ARPRequest || arp.Operation == layers.ARPReply {
+			go sendDiscoveryToServer(net.IP(arp.SourceProtAddress).String(), net.HardwareAddr(arp.SourceHwAddress).String())
+		}
+	}
+
+	dataMutex.Lock()
+	defer dataMutex.Unlock()
+
+	// 2. Tính toán Bytes
+	totalBytes += len(packet.Data())
+
+	// 3. Phân tích IP và TCP Flags
+	var srcIP string
+	if ipLayer := packet.Layer(layers.LayerTypeIPv4); ipLayer != nil {
+		ip := ipLayer.(*layers.IPv4)
+		srcIP = ip.SrcIP.String()
+	}
+
+	if tcpLayer := packet.Layer(layers.LayerTypeTCP); tcpLayer != nil {
+		tcp := tcpLayer.(*layers.TCP)
+		if tcp.SYN && !tcp.ACK {
+			totalSynCount++
+			if srcIP != "" {
+				synPerIP[srcIP]++
+			}
+		} else if tcp.ACK && !tcp.SYN {
+			totalAckCount++
+			if srcIP != "" {
+				ackPerIP[srcIP]++
+			}
+		}
+	}
 }
+
+// Luồng gửi dữ liệu lên Server mỗi 5 giây
+func startMetricsSender() {
+	ticker := time.NewTicker(1 * time.Second)
+	for range ticker.C {
+		dataMutex.Lock()
+		currentBps := totalBytes / 1
+		alerts := []map[string]string{} // Format mới
+
+		// --- THUẬT TOÁN 1: PHÁT HIỆN BĂNG THÔNG ---
+		avgBps := getAverage(historyBps)
+		if len(historyBps) >= 5 && currentBps > MinTrafficThreshold {
+			if currentBps > (avgBps * SensitivityMultiplier) {
+				alerts = append(alerts, map[string]string{
+					"title":       "Băng thông tăng vọt",
+					"sourceIp":    AgentID, // Hoặc lấy IP máy hiện tại
+					"targetIp":    "Hệ thống",
+					"description": fmt.Sprintf("Lưu lượng %s vượt mức trung bình %s", formatBytes(currentBps), formatBytes(avgBps)),
+					"type":        "warning",
+				})
+			}
+		}
+
+		// --- THUẬT TOÁN 2: PHÁT HIỆN SYN FLOOD ---
+		for ip, synCount := range synPerIP {
+			ackCount := ackPerIP[ip]
+			if synCount > MinSynFloodThreshold && synCount > (ackCount*SynAckRatioThreshold) {
+				alerts = append(alerts, map[string]string{
+					"title":       "Nghi vấn SYN Flood",
+					"sourceIp":    ip,
+					"targetIp":    "Máy chủ",
+					"description": fmt.Sprintf("Phát hiện %d gói SYN không có hồi đáp từ IP này", synCount),
+					"type":        "critical",
+				})
+			}
+		}
+		// Sao chép dữ liệu để gửi và Reset
+		cSyn, cAck, cBps := totalSynCount, totalAckCount, currentBps
+		totalSynCount, totalAckCount, totalBytes = 0, 0, 0
+		synPerIP = make(map[string]int)
+		ackPerIP = make(map[string]int)
+		dataMutex.Unlock()
+
+		sendMetricsToServer(cSyn, cAck, cBps, alerts)
+	}
+}
+
+// --- CÁC HÀM HỖ TRỢ (HELPER FUNCTIONS) ---
 
 func getAverage(arr []int) int {
 	if len(arr) == 0 {
@@ -118,77 +170,44 @@ func getAverage(arr []int) int {
 	return sum / len(arr)
 }
 
-func startMetricsSender() {
-	ticker := time.NewTicker(5 * time.Second)
-	for range ticker.C {
-		dataMutex.Lock()
+func formatBytes(b int) string {
+	const unit = 1024
+	if b < unit {
+		return fmt.Sprintf("%d Bps", b)
+	}
+	div, exp := int64(unit), 0
+	for n := b / unit; n >= unit; n /= unit {
+		div *= unit
+		exp++
+	}
+	return fmt.Sprintf("%.1f %cBps", float64(b)/float64(div), "KMGTPE"[exp])
+}
 
-		currentBps := totalBytes / 5
-		alerts := []map[string]string{}
+func sendDiscoveryToServer(ip string, mac string) {
+	payload := map[string]string{"ip": ip, "mac": mac, "agentId": AgentID}
+	jsonData, _ := json.Marshal(payload)
+	http.Post(ServerURL+"/api/discovery", "application/json", bytes.NewBuffer(jsonData))
+}
 
-		// ==========================================
-		// THUẬT TOÁN 1: BANDWIDTH SPIKE DETECTION
-		// ==========================================
-		avgBps := getAverage(historyBps)
-		// Cảnh báo nếu > 3 lần trung bình VÀ traffic tối thiểu > 10KB/s
-		if avgBps > 0 && currentBps > (avgBps*3) && currentBps > 10240 {
-			alerts = append(alerts, map[string]string{
-				"type":    "Bandwidth Spike",
-				"message": fmt.Sprintf("Băng thông tăng vọt: %d Bps (Bình thường: %d Bps)", currentBps, avgBps),
-			})
+func sendMetricsToServer(syn, ack, bps int, alerts []map[string]string) {
+	payload := map[string]interface{}{
+		"agentId": AgentID,
+		"metrics": map[string]interface{}{
+			"synCount":    syn,
+			"ackCount":    ack,
+			"bytesPerSec": bps,
+		},
+		"alerts": alerts,
+	}
+	jsonData, _ := json.Marshal(payload)
+	resp, err := http.Post(ServerURL+"/api/metrics", "application/json", bytes.NewBuffer(jsonData))
+	if err == nil {
+		timestamp := time.Now().Format("15:04:05")
+		if len(alerts) > 0 {
+			fmt.Printf("[!] %s - PHÁT HIỆN NGUY HIỂM: Đã bắn cảnh báo Telegram!\n", timestamp)
+		} else {
+			fmt.Printf("[%s] Metrics -> Traffic: %s | SYN: %d | ACK: %d\n", timestamp, formatBytes(bps), syn, ack)
 		}
-
-		// Cập nhật lịch sử (120 chu kỳ = 10 phút)
-		historyBps = append(historyBps, currentBps)
-		if len(historyBps) > 120 {
-			historyBps = historyBps[1:]
-		}
-
-		// ==========================================
-		// THUẬT TOÁN 2: BASIC SYN FLOOD (Dựa trên tỷ lệ)
-		// ==========================================
-		for ip, synCount := range synPerIP {
-			ackCount := ackPerIP[ip]
-			// Ngưỡng: IP có > 30 gói SYN/5s VÀ lượng SYN gấp 3 lần lượng ACK
-			if synCount > 30 && synCount > (ackCount*3) {
-				alerts = append(alerts, map[string]string{
-					"type":    "SYN Flood Suspicion",
-					"message": fmt.Sprintf("IP %s liên tục gửi SYN (%d gói) nhưng thiếu ACK trả về (%d gói)", ip, synCount, ackCount),
-				})
-			}
-		}
-
-		// Lấy dữ liệu gửi đi và reset
-		cSyn, cAck, cBps := totalSynCount, totalAckCount, currentBps
-		totalSynCount, totalAckCount, totalBytes = 0, 0, 0
-		synPerIP = make(map[string]int)
-		ackPerIP = make(map[string]int)
-		dataMutex.Unlock()
-
-		// Đóng gói JSON
-		payload := map[string]interface{}{
-			"agentId": AgentID,
-			"metrics": map[string]interface{}{
-				"synCount":    cSyn,
-				"ackCount":    cAck,
-				"bytesPerSec": cBps,
-			},
-			"alerts": alerts,
-		}
-		jsonData, _ := json.Marshal(payload)
-
-		// Gửi lên Server
-		resp, err := http.Post(ServerURL+"/api/metrics", "application/json", bytes.NewBuffer(jsonData))
-		if err == nil {
-			if len(alerts) > 0 {
-				fmt.Printf("[!] PHÁT HIỆN BẤT THƯỜNG: %d cảnh báo!\n", len(alerts))
-				for _, alert := range alerts {
-					fmt.Printf("    - [%s] %s\n", alert["type"], alert["message"])
-				}
-			} else {
-				fmt.Printf("[Metrics] Đã gửi -> SYN: %d | ACK: %d | Traffic: %d Bps\n", cSyn, cAck, cBps)
-			}
-			resp.Body.Close()
-		}
+		resp.Body.Close()
 	}
 }
