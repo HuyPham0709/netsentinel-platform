@@ -3,7 +3,7 @@ const mongoose = require('mongoose');
 const cors = require('cors');
 const http = require('http'); // Thư viện lõi của Node.js
 const { Server } = require('socket.io'); // Import Socket.io
-
+const DomainTraffic = require('./models/DomainTraffic');
 const Device = require('./models/Device');
 const Metric = require('./models/Metric');
 
@@ -114,6 +114,34 @@ app.get('/api/devices', async (req, res) => {
     } catch (err) {
         res.status(500).send(err.message);
     }
+});
+app.post('/api/v1/agents/traffic-batch', async (req, res) => {
+    try {
+        const { agentId, timestamp, trafficData } = req.body;
+        
+        // Chuẩn bị mảng dữ liệu để bulk insert
+        const records = trafficData.map(item => ({
+            timestamp: timestamp || new Date(),
+            agentId: agentId,
+            domain: item.domain,
+            source: item.source,
+            hitCount: item.hitCount,
+            totalBytes: item.totalBytes
+        }));
+
+        await DomainTraffic.insertMany(records);
+        
+        // (Tùy chọn) Bắn socket cho Frontend nếu cần vẽ Real-time query
+        // io.emit('new_domain_traffic', records);
+
+        res.status(202).send("Batch processed");
+    } catch (err) {
+        console.error("Lỗi xử lý traffic batch:", err);
+        res.status(500).send(err.message);
+    }
+});
+app.get('/api/v1/analytics/top-domains', async (req, res) => {
+    
 });
 // --- KHỞI CHẠY SERVER ---
 const PORT = 3000;

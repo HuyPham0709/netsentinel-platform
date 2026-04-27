@@ -1,104 +1,63 @@
-import { AlertTriangle, Eye, Shield, Zap, Target } from "lucide-react";
+import { AlertTriangle, Eye, Shield, Terminal } from "lucide-react";
 
-interface Alert {
-  id: string;
-  type: "critical" | "warning";
-  title: string;
-  sourceIp: string;
-  targetIp: string;
-  timestamp: string;
-  description: string;
-}
-
-interface AlertCardProps {
-  alert: Alert;
-  onQuickView: (id: string) => void;
-  onBlockIp: (ip: string) => void;
-}
-
-export function AlertCard({ alert, onQuickView, onBlockIp }: AlertCardProps) {
+export function AlertCard({ alert, onQuickView, onBlockIp }: any) {
   const isCritical = alert.type === "critical";
-  const themeColor = isCritical ? "red" : "orange";
+  const accentColor = isCritical ? "text-red-500" : "text-amber-500";
+  const bgColor = isCritical ? "bg-red-500/5" : "bg-amber-500/5";
+  const borderColor = isCritical ? "border-red-500/20" : "border-amber-500/20";
 
   return (
-    <div
-      className={`relative bg-[#0a0f1e]/80 backdrop-blur-md p-4 rounded-xl border transition-all duration-300 hover:translate-x-1 group ${
-        isCritical
-          ? "border-red-500/30 shadow-[0_0_15px_rgba(239,68,68,0.1)]"
-          : "border-orange-500/30 shadow-[0_0_15px_rgba(249,115,22,0.1)]"
-      }`}
-    >
-      {/* Hiệu ứng tia sáng ở góc card */}
-      <div className={`absolute top-0 right-0 w-16 h-16 opacity-10 pointer-events-none overflow-hidden rounded-tr-xl`}>
-        <div className={`absolute top-[-20px] right-[-20px] w-full h-full rotate-45 bg-${themeColor}-500`} />
-      </div>
+    <div className={`relative overflow-hidden bg-[#0d1224] border ${borderColor} rounded-xl p-4 transition-all hover:bg-[#12182d]`}>
+      {/* Decorative Corner */}
+      <div className={`absolute top-0 right-0 w-8 h-8 border-t-2 border-r-2 ${borderColor} opacity-30`} />
 
-      <div className="flex items-start gap-4">
-        {/* Icon trực quan lớn hơn */}
-        <div className="relative">
-          <div
-            className={`p-3 rounded-xl ${
-              isCritical ? "bg-red-500/10 text-red-500" : "bg-orange-500/10 text-orange-500"
-            } border border-${themeColor}-500/20`}
-          >
-            <AlertTriangle className={`w-5 h-5 ${isCritical ? "animate-pulse" : ""}`} />
+      <div className="flex gap-4">
+        {/* ICON BOX - Đẹp như Figma */}
+        <div className="flex-shrink-0">
+          <div className={`w-12 h-12 rounded-lg ${bgColor} border ${borderColor} flex items-center justify-center relative group`}>
+            <div className={`absolute inset-0 ${bgColor} blur-md opacity-0 group-hover:opacity-100 transition-opacity`} />
+            <AlertTriangle className={`w-6 h-6 ${accentColor} relative z-10`} />
           </div>
-          {/* Badge nhỏ chỉ trạng thái */}
-          <span className={`absolute -bottom-1 -right-1 w-3 h-3 rounded-full border-2 border-[#0a0f1e] ${isCritical ? "bg-red-500" : "bg-orange-500"}`} />
         </div>
 
         <div className="flex-1 min-w-0">
           <div className="flex items-center justify-between mb-1">
-            <h4 className={`font-mono font-black text-xs uppercase tracking-wider ${isCritical ? "text-red-400" : "text-orange-400"}`}>
-              {alert.title}
-            </h4>
-            <span className="text-[9px] font-mono text-slate-500 opacity-60">
-              [{alert.timestamp}]
+            <span className={`text-[10px] font-black uppercase tracking-widest ${accentColor}`}>
+              {isCritical ? '!!! Danger Zone' : '>> Warning'}
             </span>
+            <span className="text-[9px] font-mono text-slate-600">ID: {alert.id.slice(0, 6)}</span>
           </div>
 
-          <p className="text-[11px] text-slate-400 font-mono leading-relaxed mb-3 line-clamp-2">
-            <span className="text-slate-600 mr-1">DETAIL:</span> {alert.description}
-          </p>
+          <h4 className="text-sm font-bold text-slate-200 mb-2 leading-tight tracking-tight">
+            {alert.title}
+          </h4>
 
-          {/* Visual Network Path - Trực quan hóa luồng Traffic */}
-          <div className="flex items-center gap-3 p-2 rounded-lg bg-black/40 border border-slate-800/50 mb-4">
-            <div className="flex flex-col">
-              <span className="text-[8px] text-slate-500 uppercase font-bold">Source</span>
-              <span className="text-[10px] text-emerald-400 font-mono">{alert.sourceIp}</span>
+          {/* Data Badge Group */}
+          <div className="flex flex-wrap gap-2 mb-4">
+            <div className="bg-black/40 px-2 py-1 rounded border border-white/5 flex items-center gap-1.5">
+              <Terminal className="w-3 h-3 text-slate-500" />
+              <code className="text-[10px] text-emerald-400">{alert.sourceIp}</code>
             </div>
-            
-            <div className="flex-1 flex items-center justify-center">
-              <div className="h-[1px] flex-1 bg-gradient-to-r from-emerald-500/50 via-slate-700 to-cyan-500/50 relative">
-                <Zap className="w-2 h-2 absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 text-white opacity-50" />
-              </div>
-            </div>
-
-            <div className="flex flex-col items-end">
-              <span className="text-[8px] text-slate-500 uppercase font-bold">Target</span>
-              <span className="text-[10px] text-cyan-400 font-mono">{alert.targetIp}</span>
+            <div className="bg-black/40 px-2 py-1 rounded border border-white/5 text-[10px] text-slate-400">
+              {alert.timestamp}
             </div>
           </div>
 
-          {/* Action Buttons chuyên nghiệp */}
+          {/* Action Buttons */}
           <div className="flex gap-2">
-            <button
+            <button 
               onClick={() => onQuickView(alert.id)}
-              className="flex-1 flex items-center justify-center gap-2 py-2 bg-slate-800/40 hover:bg-slate-700/60 border border-slate-700/50 rounded-lg text-[10px] text-slate-300 font-bold uppercase tracking-tighter transition-all"
+              className="flex-1 py-2 bg-slate-800/40 hover:bg-slate-700/60 rounded-md text-[10px] font-bold text-slate-300 border border-white/5 transition-all uppercase tracking-tighter"
             >
-              <Eye className="w-3.5 h-3.5" />
               Analyze
             </button>
-            <button
+            <button 
               onClick={() => onBlockIp(alert.sourceIp)}
-              className={`flex-1 flex items-center justify-center gap-2 py-2 rounded-lg text-[10px] font-bold uppercase tracking-tighter transition-all ${
-                isCritical
-                  ? "bg-red-500/10 hover:bg-red-500/20 border border-red-500/40 text-red-400"
-                  : "bg-orange-500/10 hover:bg-orange-500/20 border border-orange-500/40 text-orange-400"
+              className={`px-4 py-2 rounded-md text-[10px] font-bold border transition-all uppercase tracking-tighter ${
+                isCritical ? 'bg-red-500/10 border-red-500/30 text-red-400 hover:bg-red-500/20' : 'bg-amber-500/10 border-amber-500/30 text-amber-400 hover:bg-amber-500/20'
               }`}
             >
-              <Shield className="w-3.5 h-3.5" />
-              Null Route
+              Block
             </button>
           </div>
         </div>

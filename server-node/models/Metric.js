@@ -22,5 +22,19 @@ const MetricSchema = new mongoose.Schema({
         granularity: 'seconds'
     }
 });
-
+const DomainTrafficSchema = new mongoose.Schema({
+    timestamp: { type: Date, default: Date.now },
+    agentId: String,
+    domain: String,
+    source: String, // 'SNI' hoặc 'DNS'
+    hitCount: Number,
+    totalBytes: Number
+}, { 
+    timeseries: {
+        timeField: 'timestamp',
+        metaField: 'domain', // Dùng domain làm meta để truy vấn nhóm nhanh hơn
+        granularity: 'seconds'
+    }
+});
+module.exports = mongoose.model('DomainTraffic', DomainTrafficSchema);
 module.exports = mongoose.model('Metric', MetricSchema);
