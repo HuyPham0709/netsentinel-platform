@@ -36,5 +36,4 @@ const DomainTrafficSchema = new mongoose.Schema({
         granularity: 'seconds'
     }
 });
-module.exports = mongoose.model('DomainTraffic', DomainTrafficSchema);
 module.exports = mongoose.model('Metric', MetricSchema);
